@@ -40,8 +40,9 @@ class SparseNN:
         self.max_distance = n_neurons // 2
         print(f"max_distance {self.max_distance}")
         self.allow_self_recursion = False
+        self.step_counter = 0
 
-        self.prob_threshold = 0.2
+        self.prob_threshold = 0.01
 
         # activation of current time step
         self.activation = [0 for _ in range(self.n_neurons)]
@@ -74,15 +75,24 @@ class SparseNN:
             [1 if w != 0 else 0 for w in weights] for weights in self.neurons
         ]
 
+        print("neruon mask")
+        for mask in self.neuron_mask:
+            print(mask)
+        print()
+
     def print_network(self, simple=False):
         for idx, weights in enumerate(self.neurons):
             if simple:
-                print(self.neuron_mask)
+                print([1 if w != 0 else 0 for w in weights])
             else:
                 print(f"neuron {idx} weights: {weights}")
 
+    def print_activation(self):
+        print(f"Activation {self.activation}")
+
     def forward(self, x=None):
         next_activation = [0 for _ in range(self.n_neurons)]
+        output = []
 
         # if there is an input
         if x is not None:
@@ -90,19 +100,31 @@ class SparseNN:
             for i in range(len(x)):
                 self.activation[i] += x[i]
 
-        # calculate step of all neurons
-        for i in range(self.n_neurons):
+        # print("activation for calculation ", self.activation)
+
+        # calculate step of for each neuron
+        for i, neuron in enumerate(self.neurons):
             # sum up input of all incoming connections to neuron
             input_x = 0
-            for k in range(self.n_neurons):
-                if self.neuron_mask[i][k] == 1:
-                    input_x += self.activation[i][k] * self.neurons[i][k]
-
+            for w in range(self.n_neurons):
+                # if self.neuron_mask[i][w] == 1:
+                input_x += self.activation[w] * neuron[w]
+                # print(f"input_x: {input_x}, self.activation[{i}]: {self.activation[i]}, neuron[w]: {neuron[w]}")
+                
             output_x = self.activation_fn(input_x)
 
-            next_activation[i][k] = output_x
+            next_activation[i] = output_x
+
+            # append to output
+            # TODO check correct indexing
+            if i >= self.n_neurons - self.output_dim:
+                output.append(output_x)
 
         # read output
+        self.step_counter += 1
+        self.activation = next_activation
+        self.output = output
+        return output
 
     # define forward as default method
     def __call__(self, x):
@@ -110,8 +132,18 @@ class SparseNN:
 
 
 def main():
-    model = SparseNN(input_dim=1, activation_fn=relu, n_neurons=5)
-    model.print_network(simple=True)
+    sample = [2]
+
+    model = SparseNN(input_dim=1, activation_fn=identity, n_neurons=5)
+    # model.print_network(simple=True)
+
+    model.print_activation()
+    y = model.forward(sample)
+    model.print_activation()
+    for i in range(2):
+        y = model.forward()
+        model.print_activation()
+    print("output ", y)
 
 
 if __name__ == "__main__":
