@@ -21,7 +21,7 @@ def relu(x):
 
 def sigmoid(x):
     # Clip x to avoid overflow in exp()
-    x = np.clip(x, -100, 100) # TODO this just temp fix, fix properly in network
+    x = np.clip(x, -100, 100)  # TODO this just temp fix, fix properly in network
     return 1 / (1 + np.exp(-x))
 
 
@@ -38,19 +38,20 @@ class SparseNN:
         self.input_dim = input_dim
         self.n_neurons = n_neurons
         self.output_dim = output_dim
-        
-        self.lr = 0.01 # learning rate
+
+        self.lr = 0.1  # learning rate
         # self.weight_decay = 0.99
-        self.w_max = 2
-        
+        self.w_max = 10
+
         self.activation_fn = activation_fn
         self.final_activation_fn = sigmoid
         self.max_distance = n_neurons // 2
+        # self.max_distance = 10
         print(f"max_distance {self.max_distance}")
         self.allow_self_recursion = False
         self.step_counter = 0
 
-        self.prob_threshold = 0.2
+        self.prob_threshold = 0.0
 
         # activation of current time step
         self.activation = np.zeros(self.n_neurons)
@@ -76,10 +77,12 @@ class SparseNN:
                 prob = np.random.random() / distance
                 # if neurons are connected and in allowed max_distance
                 if prob >= self.prob_threshold and distance <= self.max_distance:
-                    self.neurons[i][k] = np.random.normal()
+                    self.neurons[i][k] = np.random.normal(0, 0.5)
 
         # create 0/1 bool mask if a neuron connection has a weight or not
-        self.neuron_mask = np.array([[1 if w != 0 else 0 for w in weights] for weights in self.neurons])
+        self.neuron_mask = np.array(
+            [[1 if w != 0 else 0 for w in weights] for weights in self.neurons]
+        )
 
         print("neuron mask")
         for mask in self.neuron_mask:
@@ -97,14 +100,18 @@ class SparseNN:
         print(f"Activation {self.activation}")
 
     def forward(self, x=None):
+        # Reset activations instead of accumulating
+        self.prev_activation = self.activation.copy()
+        self.activation = np.zeros(self.n_neurons)
         next_activation = [0 for _ in range(self.n_neurons)]
         output = []
 
         # if there is an input
         if x is not None:
             # add input x to current actiavtion of input neurons
+            # TODO changeable betwene setting and adding activation
             for i in range(len(x)):
-                self.activation[i] += x[i]
+                self.activation[i] = x[i]  # Set instead of add
 
         # calculate step of for each neuron
         for i, neuron in enumerate(self.neurons):
@@ -112,11 +119,12 @@ class SparseNN:
             input_x = 0
             for w in range(self.n_neurons):
                 if self.neuron_mask[i][w] == 1:
-                    input_x += self.activation[w] * neuron[w]
+                    input_x += self.prev_activation[w] * neuron[w]
 
             # append to output
             if i >= self.n_neurons - self.output_dim:
                 output_x = self.final_activation_fn(input_x)
+                # print(f"output_x {output_x} input_x {input_x}")
                 output.append(output_x)
             else:
                 output_x = self.activation_fn(input_x)
@@ -124,7 +132,6 @@ class SparseNN:
 
         # read output
         self.step_counter += 1
-        self.prev_activation = self.activation
         self.activation = next_activation
         self.output = output
         return output
@@ -135,17 +142,19 @@ class SparseNN:
     #         update = self.lr * neuron * activation
     #         neuron += update
     #         # print(f"neuron: {neuron}, lr: {self.lr}, activation: {activation} update: {update}")
-            
+
     #         # cap weight vector length
     #         neuron = neuron / np.maximum(1, np.linalg.norm(neuron) / self.w_max)
-        
+
     def update(self):
         for i in range(self.n_neurons):
             for j in range(self.n_neurons):
                 if self.neuron_mask[i][j] == 1:
                     # Proper Hebbian: weight change = lr * pre_synaptic * post_synaptic
-                    self.neurons[i][j] += self.lr * self.activation[j] * self.activation[i]
-            
+                    self.neurons[i][j] += (
+                        self.lr * self.activation[j] * self.activation[i]
+                    )
+
             # Then normalize
             weight_norm = np.linalg.norm(self.neurons[i])
             if weight_norm > self.w_max:
@@ -157,8 +166,24 @@ class SparseNN:
 
 
 def gen_data(n=100):
-    x = np.random.randint(2, size=(n, 2))
+    x = np.zeros((n, 2))
+    labels = np.zeros(n)
+    
+    # Generate first column of random floats
+    x[:, 0] = np.random.random(n)
+    
+    # For 20% of cases, make second column same as first
+    same_indices = np.random.choice(n, size=int(0.2*n), replace=False)
+    x[same_indices, 1] = x[same_indices, 0]
+    
+    # For other 80%, generate random floats
+    diff_indices = np.setdiff1d(np.arange(n), same_indices)
+    x[diff_indices, 1] = np.random.random(len(diff_indices))
+    
+    # Label 1 if same, 0 if different
     labels = (x[:, 0] == x[:, 1]).astype(int)
+    
+    print(f"percentage of 1s: {np.sum(labels) / n}")
     return zip(x, labels)
 
 
@@ -167,13 +192,19 @@ def train(data, model, single_sample=False):
     total_samples = 0
     for x, label in data:
         total_samples += 1
-        # model.print_activation()
+        model.print_activation()
         y = model.forward(x)
+        model.print_activation()
+        for i in range(5):  
+            model.forward()
+            model.update()
+            # model.print_activation()
+            # print(f"y {y}")
+        print(f"y {y}")
+        y = model.forward()
         model.update()
         # model.print_activation()
-        # for i in range(2):
-        #     y = model.forward()
-        # model.print_activation()
+        
 
         output_class = np.round(y)
         if output_class == label:
@@ -190,9 +221,11 @@ def train(data, model, single_sample=False):
 
 
 def main():
-    data = gen_data(n=1000)
+    data = gen_data(n=100)
 
-    model = SparseNN(input_dim=1, activation_fn=sigmoid, n_neurons=10)
+    model = SparseNN(
+        input_dim=2, activation_fn=identity, n_neurons=6
+    )  # Change to input_dim=2
     train(data, model, single_sample=False)
 
 
