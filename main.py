@@ -8,6 +8,9 @@ TODO:
 - weight decay 
 - hebbbian learning
 - actual problem lol
+
+Later:
+- in 2D create columsn with inter and intra connections
 """
 
 
@@ -23,6 +26,9 @@ def sigmoid(x):
     # Clip x to avoid overflow in exp()
     x = np.clip(x, -100, 100)  # TODO this just temp fix, fix properly in network
     return 1 / (1 + np.exp(-x))
+
+def tanh(x):
+    return np.tanh(x)
 
 
 class SparseNN:
@@ -40,7 +46,7 @@ class SparseNN:
         self.output_dim = output_dim
 
         self.lr = 0.1  # learning rate
-        # self.weight_decay = 0.99
+        self.weight_decay = 0.9
         self.w_max = 10
 
         self.activation_fn = activation_fn
@@ -98,7 +104,29 @@ class SparseNN:
 
     def print_activation(self):
         print(f"Activation {self.activation}")
+        
+    def print_weight_ratio(self):
+        # prints ratio of positive weights to negative weights
+        positive_weights = 0
+        negative_weights = 0
+        for neuron in self.neurons:
+            for weight in neuron:
+                if weight > 0:
+                    positive_weights += 1
+                elif weight < 0:
+                    negative_weights += 1
+        print(f"positive weights: {positive_weights}, negative weights: {negative_weights}")
+        if negative_weights > 0:
+            print(f"ratio: {positive_weights / negative_weights:.2f}")
+        else:
+            print("no negative weights")
+        print(f"total weights: {positive_weights + negative_weights}, positive weights: {positive_weights}, negative weights: {negative_weights}")
 
+    def print_average_weight(self):
+        # prints out hte average weight of all weights
+        average_weight = np.mean(self.neurons)
+        print(f"average weight: {average_weight}")
+        
     def forward(self, x=None):
         # Reset activations instead of accumulating
         self.prev_activation = self.activation.copy()
@@ -136,29 +164,16 @@ class SparseNN:
         self.output = output
         return output
 
-    # def update(self):
-    #     for neuron, activation in zip(self.neurons, self.activation):
-    #         # calcualte hebbian learning update step
-    #         update = self.lr * neuron * activation
-    #         neuron += update
-    #         # print(f"neuron: {neuron}, lr: {self.lr}, activation: {activation} update: {update}")
-
-    #         # cap weight vector length
-    #         neuron = neuron / np.maximum(1, np.linalg.norm(neuron) / self.w_max)
-
     def update(self):
         for i in range(self.n_neurons):
             for j in range(self.n_neurons):
                 if self.neuron_mask[i][j] == 1:
-                    # Proper Hebbian: weight change = lr * pre_synaptic * post_synaptic
+                    # Oja's rule: weight change = lr * post_synaptic * (pre_synaptic - post_synaptic * weight)
                     self.neurons[i][j] += (
-                        self.lr * self.activation[j] * self.activation[i]
+                        self.lr * self.activation[i] * (self.activation[j] - self.activation[i] * self.neurons[i][j])
                     )
-
-            # Then normalize
-            weight_norm = np.linalg.norm(self.neurons[i])
-            if weight_norm > self.w_max:
-                self.neurons[i] = self.neurons[i] * self.w_max / weight_norm
+                    # Apply weight decay
+                    self.neurons[i][j] *= self.weight_decay            
 
     # define forward as default method
     def __call__(self, x):
@@ -172,40 +187,52 @@ def gen_data(n=100):
     # Generate first column of random floats
     x[:, 0] = np.random.random(n)
     
-    # For 20% of cases, make second column same as first
-    same_indices = np.random.choice(n, size=int(0.2*n), replace=False)
+    # For 50% of cases, make second column same as first
+    same_indices = np.random.choice(n, size=int(0.5*n), replace=False)
     x[same_indices, 1] = x[same_indices, 0]
     
-    # For other 80%, generate random floats
+    # For other 50%, generate random floats
     diff_indices = np.setdiff1d(np.arange(n), same_indices)
     x[diff_indices, 1] = np.random.random(len(diff_indices))
     
     # Label 1 if same, 0 if different
     labels = (x[:, 0] == x[:, 1]).astype(int)
     
-    print(f"percentage of 1s: {np.sum(labels) / n}")
+    percentage_ones = np.sum(labels) / n
+    print(f"percentage of 1s: {percentage_ones}")
+    
+    # Calculate baseline accuracy for random guessing
+    # Random guessing accuracy = max(p, 1-p) where p is the proportion of positive class
+    baseline_accuracy = max(percentage_ones, 1 - percentage_ones)
+    print(f"baseline accuracy (random guessing): {baseline_accuracy:.3f}")
+    
     return zip(x, labels)
 
 
-def train(data, model, single_sample=False):
+def train(data, model, single_sample=False, verbose=False):
     correct_samples = 0.0
     total_samples = 0
     for x, label in data:
         total_samples += 1
-        model.print_activation()
+        if verbose:
+            model.print_activation()
         y = model.forward(x)
-        model.print_activation()
-        for i in range(5):  
+        if verbose:
+            model.print_activation()
+        for i in range(2):  
             model.forward()
             model.update()
             # model.print_activation()
             # print(f"y {y}")
-        print(f"y {y}")
+        print(f"y {float(y[0]):.2f}")
         y = model.forward()
         model.update()
+        
+        for i in range(5):  
+            model.forward(np.zeros(2))
+        
         # model.print_activation()
         
-
         output_class = np.round(y)
         if output_class == label:
             correct_samples += 1
@@ -221,12 +248,15 @@ def train(data, model, single_sample=False):
 
 
 def main():
-    data = gen_data(n=100)
+    data = gen_data(n=20)
 
     model = SparseNN(
-        input_dim=2, activation_fn=identity, n_neurons=6
+        input_dim=2, activation_fn=tanh, n_neurons=6
     )  # Change to input_dim=2
+    model.print_weight_ratio()
     train(data, model, single_sample=False)
+    model.print_weight_ratio()
+    model.print_average_weight()
 
 
 if __name__ == "__main__":
